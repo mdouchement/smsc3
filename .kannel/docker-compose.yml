@@ -1,0 +1,54 @@
+version: '3.7'
+
+x-service: &service
+  build:
+    dockerfile: $PWD/kannel-build/Dockerfile
+    context: $PWD/kannel-build
+  volumes:
+    - .//kannel.conf:/etc/kannel/kannel.conf:ro
+  networks:
+    - kannel
+
+services:
+  kannel:
+    <<: *service
+    restart: always
+    image: kannel
+    container_name: kannel
+    environment:
+      CORE_LOG_LEVEL: 2
+    ports:
+      - 127.0.0.1:13000:13000
+    networks:
+      kannel:
+        aliases:
+          - bearerbox
+
+  smsbox:
+    <<: *service
+    restart: always
+    image: kannel
+    container_name: smsbox
+    command: ["/usr/local/sbin/smsbox", "/etc/kannel/kannel.conf"]
+    ports:
+      - 127.0.0.1:13013:13013
+
+  httpcat:
+      <<: *service
+      build:
+        dockerfile: $PWD/httpcat/Dockerfile
+        context: $PWD/httpcat
+      restart: always
+      image: httpcat
+      container_name: httpcat
+
+  fakesmsc-cm:
+    <<: *service
+    restart: always
+    image: kannel
+    container_name: fakesmsc-cm
+    command: ["dockerize", "-wait", "tcp://bearerbox:20000", "-timeout", "1m", "/usr/local/bin/fakesmsc", "-H", "bearerbox", "-r", "20000", "-m", "0", "foo"]
+
+networks:
+  kannel:
+    external: true
