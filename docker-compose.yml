@@ -1,3 +1,6 @@
+#
+# For development purpose (with folder .kannel)
+#
 version: '3.7'
 
 services:

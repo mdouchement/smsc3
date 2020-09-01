@@ -74,8 +74,6 @@ func (smsc *SMSC) http() error {
 			TLVFields: pdutlv.Fields{
 				pdutlv.TagReceiptedMessageID: pdutlv.CString(id),
 			},
-			// Optional
-			ServiceType: session.SystemID(),
 		}
 		m.Text, m.Size, m.Chunks = pdutext.SelectCodec(params.Message)
 

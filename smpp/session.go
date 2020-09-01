@@ -14,6 +14,7 @@ import (
 	"github.com/fiorix/go-smpp/smpp/pdu/pdutlv"
 	"github.com/goburrow/cache"
 	"github.com/mdouchement/logger"
+	"github.com/mdouchement/smsc3/address"
 	"github.com/mdouchement/smsc3/pdutext"
 )
 
@@ -50,11 +51,6 @@ func NewSession(c net.Conn, systemID string) *Session {
 // Close closes the session.
 func (s *Session) Close() error {
 	return s.sequences.Close()
-}
-
-// SystemID returns the system id of the SMSC.
-func (s *Session) SystemID() string {
-	return s.systemID
 }
 
 // AddPDU adds PDU response to the session.
@@ -113,31 +109,16 @@ func (s *Session) Send(m *Message, p pdu.Body) error {
 
 func (s *Session) defaults(m *Message, p pdu.Body) {
 	f := p.Fields()
-	f.Set(pdufield.SourceAddr, m.Src)
-	switch {
-	case s.international.MatchString(m.Src):
-		f.Set(pdufield.SourceAddrTON, 0x01)
-	case s.national.MatchString(m.Src):
-		f.Set(pdufield.SourceAddrTON, 0x02)
-	default:
-		f.Set(pdufield.SourceAddrTON, 0x03) // Alpha numeric
-	}
-	f.Set(pdufield.SourceAddrNPI, 0x00) // Unknown
 
-	//
+	src := address.Parse(m.Src)
+	f.Set(pdufield.SourceAddr, src.String())
+	f.Set(pdufield.SourceAddrTON, src.TON())
+	f.Set(pdufield.SourceAddrNPI, src.NPI())
 
-	f.Set(pdufield.DestinationAddr, m.Dst)
-	switch {
-	case s.international.MatchString(m.Dst):
-		f.Set(pdufield.DestAddrTON, 0x01)
-	case s.national.MatchString(m.Dst):
-		f.Set(pdufield.DestAddrTON, 0x02)
-	default:
-		f.Set(pdufield.DestAddrTON, 0x03) // Alpha numeric
-	}
-	f.Set(pdufield.DestAddrNPI, 0x00) // Unknown
-
-	//
+	dst := address.Parse(m.Dst)
+	f.Set(pdufield.DestinationAddr, dst.String())
+	f.Set(pdufield.DestAddrTON, dst.TON())
+	f.Set(pdufield.DestAddrNPI, dst.NPI())
 
 	f.Set(pdufield.RegisteredDelivery, uint8(m.Register))
 	// Check if the message has validity set.
