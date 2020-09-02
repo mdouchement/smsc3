@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"regexp"
 	"sync"
 	"time"
 
@@ -21,13 +20,11 @@ import (
 type (
 	// A Session is a SMPP session.
 	Session struct {
-		mu            sync.Mutex
-		rnd           *rand.Rand
-		c             net.Conn
-		sequences     cache.Cache
-		systemID      string
-		international *regexp.Regexp
-		national      *regexp.Regexp
+		mu        sync.Mutex
+		rnd       *rand.Rand
+		c         net.Conn
+		sequences cache.Cache
+		systemID  string
 	}
 
 	// A PDU is a response to a SMPP command.
@@ -43,8 +40,6 @@ func NewSession(c net.Conn, systemID string) *Session {
 			cache.WithMaximumSize(4096<<20), // 4 MiB
 			cache.WithExpireAfterWrite(10*time.Minute),
 		),
-		international: regexp.MustCompile(`^(\+|00)[0-9]+$`),
-		national:      regexp.MustCompile(`^[0-9]+$`),
 	}
 }
 
@@ -175,6 +170,7 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 			f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, msg[i*limit:]...)))
 		}
 		f.Set(pdufield.DataCoding, uint8(m.Text.Type()))
+		f.Set(pdufield.ESMClass, 0b01000000) // UDH Indicator
 
 		if err := p.SerializeTo(s.c); err != nil {
 			return err
