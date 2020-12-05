@@ -3,7 +3,7 @@ package pdutext
 import (
 	"unicode/utf8"
 
-	"github.com/fiorix/go-smpp/smpp/pdu/pdutext"
+	"github.com/mdouchement/smpp/smpp/pdu/pdutext"
 )
 
 const (

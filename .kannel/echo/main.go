@@ -8,9 +8,9 @@ import (
 	"os"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/fiorix/go-smpp/smpp/pdu"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdufield"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdutext"
+	"github.com/mdouchement/smpp/smpp/pdu"
+	"github.com/mdouchement/smpp/smpp/pdu/pdufield"
+	"github.com/mdouchement/smpp/smpp/pdu/pdutext"
 	"github.com/pkg/errors"
 )
 

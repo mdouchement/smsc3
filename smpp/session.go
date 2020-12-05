@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fiorix/go-smpp/smpp/pdu"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdufield"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdutlv"
 	"github.com/goburrow/cache"
 	"github.com/mdouchement/logger"
+	"github.com/mdouchement/smpp/smpp/pdu"
+	"github.com/mdouchement/smpp/smpp/pdu/pdufield"
+	"github.com/mdouchement/smpp/smpp/pdu/pdutlv"
 	"github.com/mdouchement/smsc3/address"
 	"github.com/mdouchement/smsc3/pdutext"
 )

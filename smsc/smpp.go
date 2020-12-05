@@ -5,10 +5,10 @@ import (
 	"net"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/fiorix/go-smpp/smpp/pdu"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdufield"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdutlv"
 	"github.com/mdouchement/basex"
+	"github.com/mdouchement/smpp/smpp/pdu"
+	"github.com/mdouchement/smpp/smpp/pdu/pdufield"
+	"github.com/mdouchement/smpp/smpp/pdu/pdutlv"
 	"github.com/mdouchement/smsc3/smpp"
 	"github.com/pkg/errors"
 )
@@ -58,7 +58,6 @@ func (smsc *SMSC) smpp() error {
 						return
 					}
 
-					r.Header().Seq = p.Header().Seq // Response must have the same sequence number
 					if err = r.SerializeTo(c); err != nil {
 						smsc.log.Error(errors.Wrap(err, "smpp: authentication"))
 						return
@@ -79,7 +78,7 @@ func (smsc *SMSC) smpp() error {
 				switch p.Header().ID {
 				case pdu.EnquireLinkID:
 					// Ping / Heartbeat
-					r = pdu.NewEnquireLinkResp()
+					r = pdu.NewEnquireLinkRespSeq(p.Header().Seq)
 				case pdu.DeliverSMRespID:
 					// Ack of a sent SMS/DLR from SMSC to ESME
 					smsc.log.Infof("ACK sms/dlr")
@@ -92,12 +91,12 @@ func (smsc *SMSC) smpp() error {
 					p.Fields().Set(pdufield.MessageID, id)
 					session.DLRs(smsc.log, p)
 
-					r = pdu.NewSubmitSMResp()
+					r = pdu.NewSubmitSMRespSeq(p.Header().Seq)
 					r.Fields().Set(pdufield.MessageID, id)
 				case pdu.UnbindID:
 					// End of session
 					smsc.log.Infof("Unbind session %s", sname)
-					r = pdu.NewUnbindResp()
+					r = pdu.NewUnbindRespSeq(p.Header().Seq)
 				case pdu.GenericNACKID:
 					smsc.log.Warn(p.Header().Status.Error())
 				default:
@@ -105,7 +104,6 @@ func (smsc *SMSC) smpp() error {
 				}
 
 				if r != nil {
-					r.Header().Seq = p.Header().Seq // Response must have the same sequence number
 					if err = r.SerializeTo(c); err != nil {
 						smsc.log.Errorf("smpp: %s: %s", p.Header().ID.String(), err)
 						return
@@ -120,11 +118,11 @@ func (smsc *SMSC) auth(p pdu.Body) (string, pdu.Body, error) {
 	var r pdu.Body
 	switch p.Header().ID {
 	case pdu.BindTransmitterID:
-		r = pdu.NewBindTransmitterResp()
+		r = pdu.NewBindTransmitterRespSeq(p.Header().Seq)
 	case pdu.BindReceiverID:
-		r = pdu.NewBindReceiverResp()
+		r = pdu.NewBindReceiverRespSeq(p.Header().Seq)
 	case pdu.BindTransceiverID:
-		r = pdu.NewBindTransceiverResp()
+		r = pdu.NewBindTransceiverRespSeq(p.Header().Seq)
 	default:
 		return "", r, errors.New("unexpected pdu, want bind")
 	}

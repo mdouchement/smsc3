@@ -25,8 +25,6 @@ func IsGSM7(message string) bool {
 		if message[i] == 194 {
 			if i+1 < ns {
 				switch message[i+1] {
-				case 160: // NO-BREAK SPACE
-					fallthrough
 				case 161: // ¡
 					fallthrough
 				case 163: // £
@@ -159,8 +157,6 @@ func GSM7size(message string) (size int) {
 		if message[i] == 194 {
 			if i+1 < ns {
 				switch message[i+1] {
-				case 160: // NO-BREAK SPACE
-					fallthrough
 				case 161: // ¡
 					fallthrough
 				case 163: // £
