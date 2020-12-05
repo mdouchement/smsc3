@@ -1,0 +1,28 @@
+debug: true
+url: http://localhost:13013/cgi-bin/sendsms
+params:
+  username: foo
+  password: bar
+  #
+  from: GOPHER
+  to: "+33600000001"
+  #
+  charset: UTF-8
+  coding: 1
+  text: Hello world
+  #
+  smsc: sinch
+  dlr-mask: 31
+  dlr-url:
+    url: http://httpcat:8888/sms-dlr
+    params:
+      dlr: "%d"
+      smsid: "%I"
+      sender: "%p"
+      receiver: "%P"
+      time: "%t"
+      text: "%b"
+      smscid: "%i"
+      charset: "%C"
+      coding: "%c"
+      meta: "%D"

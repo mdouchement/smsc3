@@ -3,8 +3,8 @@ package smpp
 import (
 	"time"
 
-	"github.com/fiorix/go-smpp/smpp/pdu/pdufield"
-	"github.com/fiorix/go-smpp/smpp/pdu/pdutlv"
+	"github.com/mdouchement/smpp/smpp/pdu/pdufield"
+	"github.com/mdouchement/smpp/smpp/pdu/pdutlv"
 	"github.com/mdouchement/smsc3/pdutext"
 )
 
