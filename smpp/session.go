@@ -30,12 +30,25 @@ type (
 		log       logger.Logger
 		c         *Connection
 		sequences cache.Cache
+		segments  cache.Cache
 		systemID  string
 	}
 
-	// A PDU is a response to a SMPP command.
-	PDU = pdu.Body
+	// A Segment holds multi-segments metadata.
+	Segment struct {
+		ID                 string
+		RegisteredDelivery pdufield.DeliverySetting
+		Count              int
+		Completed          bool
+	}
 )
+
+// ConvertValidity convert a duration to an Absolute time format.
+func ConvertValidity(d time.Duration) string {
+	validity := time.Now().UTC().Add(d)
+	// Absolute time format YYMMDDhhmmsstnnp, see SMPP3.4 spec 7.1.1.
+	return validity.Format("060102150405") + "000+"
+}
 
 // NewSession returns a new Session.
 func NewSession(l logger.Logger, c *Connection, systemID string) *Session {
@@ -48,9 +61,14 @@ func NewSession(l logger.Logger, c *Connection, systemID string) *Session {
 			cache.WithMaximumSize(4096<<20), // 4 MiB
 			cache.WithExpireAfterWrite(10*time.Minute),
 		),
+		segments: cache.New(
+			cache.WithMaximumSize(4096<<20), // 4 MiB
+			cache.WithExpireAfterWrite(10*time.Minute),
+		),
 	}
 }
 
+// Listen reads the connection and handles read PDUs.
 func (s *Session) Listen() error {
 	for {
 		p, err := s.c.Decode()
@@ -76,9 +94,18 @@ func (s *Session) Listen() error {
 		case pdu.SubmitSMID:
 			// Receiving SMS from ESME to SMSC
 
-			id := basex.GenerateID()
-			p.Fields().Set(pdufield.MessageID, id)
-			s.DLRs(p)
+			id, segment, err := s.handleSegments(p)
+			if err != nil {
+				s.log.WithError(err).Error("Could not handle submit_sm segments")
+			}
+
+			if segment == nil || segment.Completed {
+				p.Fields().Set(pdufield.MessageID, id)
+				if segment != nil {
+					p.Fields().Set(pdufield.RegisteredDelivery, segment.RegisteredDelivery)
+				}
+				s.DLRs(p)
+			}
 
 			r = pdu.NewSubmitSMRespSeq(p.Header().Seq)
 			r.Fields().Set(pdufield.MessageID, id)
@@ -112,6 +139,10 @@ func (s *Session) Listen() error {
 				return err
 			}
 
+			if err = s.segments.Close(); err != nil {
+				return err
+			}
+
 			return s.sequences.Close()
 		}
 	}
@@ -137,11 +168,15 @@ func (s *Session) Close() error {
 		return err
 	}
 
+	if err = s.segments.Close(); err != nil {
+		return err
+	}
+
 	return s.sequences.Close()
 }
 
 // AddPDU adds PDU response to the session.
-func (s *Session) AddPDU(p PDU) {
+func (s *Session) AddPDU(p pdu.Body) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -149,7 +184,7 @@ func (s *Session) AddPDU(p PDU) {
 }
 
 // PDU returns the PDU response for the given sequence.
-func (s *Session) PDU(sequence uint32) PDU {
+func (s *Session) PDU(sequence uint32) pdu.Body {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -157,7 +192,7 @@ func (s *Session) PDU(sequence uint32) PDU {
 	if !ok {
 		return nil
 	}
-	return v.(PDU)
+	return v.(pdu.Body)
 }
 
 // Send send the SMS to the session.
@@ -271,6 +306,50 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 	return nil
 }
 
+func (s *Session) handleSegments(p pdu.Body) (string, *Segment, error) {
+	esmclass, ok := p.Fields()[pdufield.ESMClass]
+	if !ok && esmclass == nil {
+		return basex.GenerateID(), nil, nil
+	}
+
+	if esmclass.Bytes()[0]&UDHI == 0 {
+		return basex.GenerateID(), nil, nil
+	}
+
+	udh, err := pdutext.ParseUDH(p.Fields()[pdufield.ShortMessage].Bytes())
+	if err != nil {
+		return basex.GenerateID(), nil, err
+	}
+
+	//
+
+	var segment *Segment
+
+	v, ok := s.segments.GetIfPresent(udh.ID)
+	if ok {
+		segment = v.(*Segment)
+	}
+
+	if segment == nil {
+		segment = &Segment{
+			ID:    basex.GenerateID(),
+			Count: 0,
+		}
+	}
+
+	segment.Count++
+	segment.Completed = segment.Count == udh.Segments
+
+	// Only the first segment contains the registry_delivery information.
+	delivery, ok := p.Fields()[pdufield.RegisteredDelivery]
+	if ok && delivery != nil {
+		segment.RegisteredDelivery |= pdufield.DeliverySetting(delivery.Bytes()[0])
+	}
+
+	s.segments.Put(udh.ID, segment)
+	return segment.ID, segment, err
+}
+
 // DLRs generates and sends the DLRs for the given received SMS.
 // https://smpp.org/smpp-delivery-receipt.html
 // https://smpp.io/dlr-receipt/
@@ -324,12 +403,6 @@ func (s *Session) csmsReference16() uint16 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return uint16(s.rnd.Intn(0xFFFF))
-}
-
-func ConvertValidity(d time.Duration) string {
-	validity := time.Now().UTC().Add(d)
-	// Absolute time format YYMMDDhhmmsstnnp, see SMPP3.4 spec 7.1.1.
-	return validity.Format("060102150405") + "000+"
 }
 
 // Several ways to craft a DLR:
