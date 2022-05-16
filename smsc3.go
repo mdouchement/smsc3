@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/signal"
 	"regexp"
 
 	"github.com/mdouchement/logger"
@@ -38,7 +39,14 @@ func main() {
 
 	smsc.Initialize(logger.WrapLogrus(l), s)
 
-	if err := s.Listen(); err != nil {
-		l.Fatal(err)
-	}
+	go func() {
+		if err := s.Listen(); err != nil {
+			l.Fatal(err)
+		}
+	}()
+	defer s.Stop()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, os.Kill)
+	<-signals
 }

@@ -7,6 +7,7 @@ services:
   smsc-sinch:
     restart: always
     image: alpine
+    stop_signal: SIGINT
     command: /mbin/smsc3
     container_name: smsc3
     ports:

@@ -9,8 +9,10 @@ import (
 
 // A SMSC is server that handle SMPP protocol.
 type SMSC struct {
-	mu  sync.Mutex
-	log logger.Logger
+	mu    sync.Mutex
+	log   logger.Logger
+	lhttp logger.Logger
+	lsmpp logger.Logger
 
 	// SMPP
 	SMPPaddr string
@@ -26,6 +28,8 @@ type SMSC struct {
 // Initialize returns the given SMSC initialized.
 func Initialize(l logger.Logger, smsc *SMSC) *SMSC {
 	smsc.log = l
+	smsc.lhttp = l.WithPrefix("[HTTP]")
+	smsc.lsmpp = l.WithPrefix("[SMPP]")
 	smsc.sessions = make(map[string]*smpp.Session, 1)
 
 	if smsc.SystemID == "" {
@@ -71,4 +75,18 @@ func (smsc *SMSC) Unregister(name string) {
 	defer smsc.mu.Unlock()
 
 	delete(smsc.sessions, name)
+}
+
+// Stop gracefully stop the server.
+func (smsc *SMSC) Stop() {
+	smsc.log.Info("Gracefully stopping...")
+
+	// smsc.mu.Lock()
+	// defer smsc.mu.Unlock()
+
+	for name, session := range smsc.sessions {
+		if err := session.Close(); err != nil {
+			smsc.log.WithError(err).Errorf("Could not close the session %s", name)
+		}
+	}
 }
