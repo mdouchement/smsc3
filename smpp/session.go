@@ -1,55 +1,182 @@
 package smpp
 
 import (
-	"errors"
 	"fmt"
+	"io"
 	"math/rand"
-	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/goburrow/cache"
+	"github.com/mdouchement/basex"
 	"github.com/mdouchement/logger"
 	"github.com/mdouchement/smpp/smpp/pdu"
 	"github.com/mdouchement/smpp/smpp/pdu/pdufield"
 	"github.com/mdouchement/smpp/smpp/pdu/pdutlv"
 	"github.com/mdouchement/smsc3/address"
 	"github.com/mdouchement/smsc3/pdutext"
+	"github.com/pkg/errors"
 )
+
+// UDHI is the User Data Header Indicator used in esm_class.
+const UDHI = 0b0100_0000
 
 type (
 	// A Session is a SMPP session.
 	Session struct {
 		mu        sync.Mutex
 		rnd       *rand.Rand
-		c         net.Conn
+		log       logger.Logger
+		c         *Connection
 		sequences cache.Cache
+		segments  cache.Cache
 		systemID  string
 	}
 
-	// A PDU is a response to a SMPP command.
-	PDU = pdu.Body
+	// A Segment holds multi-segments metadata.
+	Segment struct {
+		ID                 string
+		RegisteredDelivery pdufield.DeliverySetting
+		Count              int
+		Completed          bool
+	}
 )
 
+// ConvertValidity convert a duration to an Absolute time format.
+func ConvertValidity(d time.Duration) string {
+	validity := time.Now().UTC().Add(d)
+	// Absolute time format YYMMDDhhmmsstnnp, see SMPP3.4 spec 7.1.1.
+	return validity.Format("060102150405") + "000+"
+}
+
 // NewSession returns a new Session.
-func NewSession(c net.Conn, systemID string) *Session {
+func NewSession(l logger.Logger, c *Connection, systemID string) *Session {
 	return &Session{
-		rnd: rand.New(rand.NewSource(time.Now().UnixNano())),
-		c:   c,
+		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		log:      l,
+		c:        c,
+		systemID: systemID,
 		sequences: cache.New(
+			cache.WithMaximumSize(4096<<20), // 4 MiB
+			cache.WithExpireAfterWrite(10*time.Minute),
+		),
+		segments: cache.New(
 			cache.WithMaximumSize(4096<<20), // 4 MiB
 			cache.WithExpireAfterWrite(10*time.Minute),
 		),
 	}
 }
 
+// Listen reads the connection and handles read PDUs.
+func (s *Session) Listen() error {
+	for {
+		p, err := s.c.Decode()
+		if err != nil {
+			if err == io.EOF || strings.Contains(err.Error(), "close") {
+				s.log.Info("Session closed")
+				return s.Close()
+			}
+			s.log.Error(errors.Wrap(err, "smpp: pdu decode"))
+			continue // Ignoring error
+		}
+
+		// Supported SMPP commands
+		var r pdu.Body
+		switch p.Header().ID {
+		case pdu.EnquireLinkID:
+			// Ping / Heartbeat
+			r = pdu.NewEnquireLinkRespSeq(p.Header().Seq)
+		case pdu.DeliverSMRespID:
+			// Ack of a sent SMS/DLR from SMSC to ESME
+			s.log.Infof("ACK sms/dlr")
+			s.AddPDU(p)
+		case pdu.SubmitSMID:
+			// Receiving SMS from ESME to SMSC
+
+			id, segment, err := s.handleSegments(p)
+			if err != nil {
+				s.log.WithError(err).Error("Could not handle submit_sm segments")
+			}
+
+			if segment == nil || segment.Completed {
+				p.Fields().Set(pdufield.MessageID, id)
+				if segment != nil {
+					p.Fields().Set(pdufield.RegisteredDelivery, segment.RegisteredDelivery)
+				}
+				s.DLRs(p)
+			}
+
+			r = pdu.NewSubmitSMRespSeq(p.Header().Seq)
+			r.Fields().Set(pdufield.MessageID, id)
+		case pdu.UnbindID:
+			// End of session asked by ESME
+			s.log.Infof("Unbinding session %s", s.systemID)
+			r = pdu.NewUnbindRespSeq(p.Header().Seq)
+		case pdu.UnbindRespID:
+			// End of session asked by SMSC
+			s.log.Infof("Unbinded session %s", s.systemID)
+		case pdu.GenericNACKID:
+			s.log.Warn(p.Header().Status.Error())
+		default:
+			r = pdu.NewGenericNACK()
+			r.Header().Status = 0x00000003 // Invalid Command ID
+		}
+
+		if r != nil {
+			if err = s.c.Serialize(r); err != nil {
+				s.log.Errorf("smpp: %s: %s", p.Header().ID.String(), err)
+				return nil
+			}
+		}
+
+		// Stop the session
+		if p.Header().ID == pdu.UnbindID {
+			s.c.log.Infof("Closing session %s", s.systemID)
+
+			err = s.c.Close()
+			if err != nil {
+				return err
+			}
+
+			if err = s.segments.Close(); err != nil {
+				return err
+			}
+
+			return s.sequences.Close()
+		}
+	}
+}
+
 // Close closes the session.
 func (s *Session) Close() error {
+	s.c.log.Infof("Closing session %s", s.systemID)
+
+	p := pdu.NewUnbind()
+	err := s.c.Serialize(p)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.c.Decode() // unbind_resp
+	if err != nil {
+		return err
+	}
+
+	err = s.c.Close()
+	if err != nil {
+		return err
+	}
+
+	if err = s.segments.Close(); err != nil {
+		return err
+	}
+
 	return s.sequences.Close()
 }
 
 // AddPDU adds PDU response to the session.
-func (s *Session) AddPDU(p PDU) {
+func (s *Session) AddPDU(p pdu.Body) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -57,7 +184,7 @@ func (s *Session) AddPDU(p PDU) {
 }
 
 // PDU returns the PDU response for the given sequence.
-func (s *Session) PDU(sequence uint32) PDU {
+func (s *Session) PDU(sequence uint32) pdu.Body {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -65,13 +192,13 @@ func (s *Session) PDU(sequence uint32) PDU {
 	if !ok {
 		return nil
 	}
-	return v.(PDU)
+	return v.(pdu.Body)
 }
 
 // Send send the SMS to the session.
 func (s *Session) Send(m *Message, p pdu.Body) error {
 	send := s.single
-	if m.Chunks > 1 {
+	if m.Segments > 1 {
 		send = s.multipart
 	}
 
@@ -118,7 +245,7 @@ func (s *Session) defaults(m *Message, p pdu.Body) {
 	f.Set(pdufield.RegisteredDelivery, uint8(m.Register))
 	// Check if the message has validity set.
 	if m.Validity != time.Duration(0) {
-		f.Set(pdufield.ValidityPeriod, convertValidity(m.Validity))
+		f.Set(pdufield.ValidityPeriod, ConvertValidity(m.Validity))
 	}
 	f.Set(pdufield.ServiceType, m.ServiceType)
 	f.Set(pdufield.ESMClass, m.ESMClass)
@@ -138,21 +265,20 @@ func (s *Session) single(m *Message, p pdu.Body) error {
 	f := p.Fields()
 	f.Set(pdufield.ShortMessage, m.Text)
 
-	return p.SerializeTo(s.c)
+	return s.c.Serialize(p)
 }
 
 func (s *Session) multipart(m *Message, p pdu.Body) error {
-	csms := s.csmsReference()
+	csms := s.csmsReference8()
 	udh := []byte{
-		6,               // UDH length
-		8,               // Length of CSMS identifier, CSMS 16 bit reference number
-		4,               // Length of the header, excluding first two fields
-		byte(csms >> 8), // CSMS reference number (MSB), must be the same for all SMS chunks
-		byte(csms),      // CSMS reference number (LSB), must be the same for all SMS chunks
-		byte(m.Chunks),  // Total parts
-		0,               // Part number (default value)
+		5,                // UDH length
+		0,                // Length of CSMS identifier, CSMS 8 bit reference number
+		3,                // Length of the header, excluding first two fields
+		byte(csms),       // CSMS reference number, must be the same for all SMS segments
+		byte(m.Segments), // Total parts
+		0,                // Part number (default value)
 	}
-	m.ESMClass = 0x40 // The short message begins with a user data header (UDH)
+	m.ESMClass |= UDHI // The short message begins with a user data header (UDH)
 
 	msg := m.Text.Encode()
 	limit := pdutext.SizeUCS2Multipart
@@ -160,19 +286,19 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 		limit = pdutext.SizeGSM7Multipart
 	}
 
-	for i := 0; i < m.Chunks; i++ {
+	for i := 0; i < m.Segments; i++ {
 		udh[len(udh)-1] = byte(i + 1) // Set part number
 
 		f := p.Fields()
-		if i < m.Chunks-1 {
+		if i < m.Segments-1 {
 			f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, msg[i*limit:(i+1)*limit]...)))
 		} else {
 			f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, msg[i*limit:]...)))
 		}
 		f.Set(pdufield.DataCoding, uint8(m.Text.Type()))
-		f.Set(pdufield.ESMClass, 0b01000000) // UDH Indicator
+		f.Set(pdufield.ESMClass, m.ESMClass) // UDH Indicator
 
-		if err := p.SerializeTo(s.c); err != nil {
+		if err := s.c.Serialize(p); err != nil {
 			return err
 		}
 	}
@@ -180,18 +306,65 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 	return nil
 }
 
+func (s *Session) handleSegments(p pdu.Body) (string, *Segment, error) {
+	esmclass, ok := p.Fields()[pdufield.ESMClass]
+	if !ok && esmclass == nil {
+		return basex.GenerateID(), nil, nil
+	}
+
+	if esmclass.Bytes()[0]&UDHI == 0 {
+		return basex.GenerateID(), nil, nil
+	}
+
+	udh, err := pdutext.ParseUDH(p.Fields()[pdufield.ShortMessage].Bytes())
+	if err != nil {
+		return basex.GenerateID(), nil, err
+	}
+
+	//
+
+	var segment *Segment
+
+	v, ok := s.segments.GetIfPresent(udh.ID)
+	if ok {
+		segment = v.(*Segment)
+	}
+
+	if segment == nil {
+		segment = &Segment{
+			ID:    basex.GenerateID(),
+			Count: 0,
+		}
+	}
+
+	segment.Count++
+	segment.Completed = segment.Count == udh.Segments
+
+	// Only the first segment contains the registry_delivery information.
+	delivery, ok := p.Fields()[pdufield.RegisteredDelivery]
+	if ok && delivery != nil {
+		segment.RegisteredDelivery |= pdufield.DeliverySetting(delivery.Bytes()[0])
+	}
+
+	s.segments.Put(udh.ID, segment)
+	return segment.ID, segment, err
+}
+
 // DLRs generates and sends the DLRs for the given received SMS.
 // https://smpp.org/smpp-delivery-receipt.html
 // https://smpp.io/dlr-receipt/
 // https://github.com/pruiz/kannel/blob/master/gw/smsc/smsc_smpp.c
-func (s *Session) DLRs(l logger.Logger, p pdu.Body) {
+func (s *Session) DLRs(p pdu.Body) {
 	go func() {
-		rd := p.Fields()[pdufield.RegisteredDelivery]
-		if rd == nil {
+		field := p.Fields()[pdufield.RegisteredDelivery]
+		if field == nil {
 			return
 		}
 
-		switch rd.Bytes()[0] {
+		rd := field.Bytes()[0]
+		rd &= 0b0000_0011 // Ignore 0bxxx1xxxx that may be provided for intermediate notification.
+
+		switch rd {
 		case 0:
 			// No MC Delivery Receipt requested
 		case 1:
@@ -200,46 +373,46 @@ func (s *Session) DLRs(l logger.Logger, p pdu.Body) {
 			// DELIVERED (2) ; Kannel's %d the delivery report value (dlr 1)
 			dlr := createDLR(p, 2)
 			time.Sleep(time.Second)
-			dlr.SerializeTo(s.c)
-			l.Infof("DLR DELIVERED (%d)", dlr.Header().Seq)
+			err := s.c.Serialize(dlr)
+			if err != nil {
+				s.log.WithError(err).Error("Could not send DLR")
+			}
+			s.log.Infof("DLR DELIVERED (%d)", dlr.Header().Seq)
 		case 2:
-			// MC Delivery Receipt requested where the final delivery outcome is delivery failure
-			// This includes scenarii where the message was cancelled via the cancel_sm operation
-		case 3:
 			// MC Delivery Receipt requested where the final delivery outcome is success
 
 			// DELIVERED (2) ; Kannel's %d the delivery report value (dlr 1)
 			dlr := createDLR(p, 2)
 			time.Sleep(time.Second)
-			dlr.SerializeTo(s.c)
-			l.Infof("DLR DELIVERED (%d)", dlr.Header().Seq)
+			err := s.c.Serialize(dlr)
+			if err != nil {
+				s.log.WithError(err).Error("Could not send DLR")
+			}
+			s.log.Infof("DLR DELIVERED (%d)", dlr.Header().Seq)
 		}
 	}()
 }
 
-func (s *Session) csmsReference() uint16 {
+func (s *Session) csmsReference8() uint8 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return uint8(s.rnd.Intn(0xFF))
+}
+
+func (s *Session) csmsReference16() uint16 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return uint16(s.rnd.Intn(0xFFFF))
 }
 
-func convertValidity(d time.Duration) string {
-	validity := time.Now().UTC().Add(d)
-	// Absolute time format YYMMDDhhmmsstnnp, see SMPP3.4 spec 7.1.1.
-	return validity.Format("060102150405") + "000+"
-}
-
 // Several ways to craft a DLR:
-// esm_class + message_state + receipted_message_id (SMPP3.4)
-// esm_class + message_payload  (SMPP3.4)
-// esm_class + short_message    (SMPP3.3)
+// esm_class + short_message + receipted_message_id
 func createDLR(p pdu.Body, state int) pdu.Body {
 	src := p.Fields()
 	id := src[pdufield.MessageID].String()
 
 	dlr := pdu.NewDeliverSM()
 	f := dlr.Fields()
-	f.Set(pdufield.MessageID, id)
 
 	f.Set(pdufield.SourceAddr, src[pdufield.DestinationAddr])
 	f.Set(pdufield.SourceAddrTON, src[pdufield.DestAddrTON])
@@ -276,14 +449,11 @@ func createDLR(p pdu.Body, state int) pdu.Body {
 	default:
 		panic("invalid state")
 	}
-	// f.Set(pdufield.ShortMessage, []byte(msg)) // Old fashion way (SMPP3.3)
-	// f.Set(pdufield.DataCoding, 1) // IA5 / ASCII
+	sm, _, _ := pdutext.SelectCodec(msg)
+	f.Set(pdufield.ShortMessage, sm)
 
 	tlv := dlr.TLVFields()
-	// tlv.Set(pdutlv.TagNetworkErrorCode, pdutlv.CString("")) // No error
-	tlv.Set(pdutlv.TagMessageStateOption, state)
 	tlv.Set(pdutlv.TagReceiptedMessageID, pdutlv.CString(id))
-	tlv.Set(pdutlv.TagMessagePayload, msg)
 
 	return dlr
 }

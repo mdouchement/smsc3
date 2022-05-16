@@ -29,11 +29,11 @@ type (
 )
 
 // SelectCodec selects the right codec and computes details.
-func SelectCodec(message string) (c Codec, size int, chunks int) {
+func SelectCodec(message string) (c Codec, size int, segments int) {
 	if IsGSM7(message) {
-		return GSM7(message), Size(message), Chunks(message)
+		return GSM7(message), Size(message), Segments(message)
 	}
-	return UCS2(message), Size(message), Chunks(message)
+	return UCS2(message), Size(message), Segments(message)
 }
 
 // Size returns the size of the message.
@@ -44,8 +44,8 @@ func Size(message string) int {
 	return utf8.RuneCountInString(message) // size of the rune array
 }
 
-// Chunks returns the number of chunks used to send the given message.
-func Chunks(message string) int {
+// Segments returns the number of segments used to send the given message.
+func Segments(message string) int {
 	size := Size(message)
 	single := SizeUCS2Single
 	multipart := SizeUCS2Multipart
@@ -58,10 +58,10 @@ func Chunks(message string) int {
 		return 1
 	}
 
-	parts := size / multipart
+	segments := size / multipart
 	if size%multipart != 0 {
-		parts++
+		segments++
 	}
 
-	return parts
+	return segments
 }

@@ -32,7 +32,7 @@ type (
 
 func (smsc *SMSC) http() error {
 	http.HandleFunc("/deliver", func(w http.ResponseWriter, r *http.Request) {
-		smsc.log.Info("Got a SMS to deliver")
+		smsc.lhttp.Info("Got a SMS to deliver")
 
 		var params SMSParams
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
@@ -75,10 +75,10 @@ func (smsc *SMSC) http() error {
 				pdutlv.TagReceiptedMessageID: pdutlv.CString(id),
 			},
 		}
-		m.Text, m.Size, m.Chunks = pdutext.SelectCodec(params.Message)
+		m.Text, m.Size, m.Segments = pdutext.SelectCodec(params.Message)
 
 		p := pdu.NewDeliverSM()
-		smsc.log.Infof("NewDeliverSM: %d", p.Header().Seq)
+		smsc.lhttp.Infof("NewDeliverSM: %d", p.Header().Seq)
 		if err := session.Send(m, p); err != nil {
 			smsc.render(w, http.StatusInternalServerError, err.Error())
 			return
@@ -87,12 +87,12 @@ func (smsc *SMSC) http() error {
 		smsc.render(w, http.StatusOK, fmt.Sprintf("OK %s (%d)", id, p.Header().Seq))
 	})
 
-	smsc.log.Infof("Listening HTTP on %s", smsc.HTTPaddr)
+	smsc.lhttp.Infof("Listening HTTP on %s", smsc.HTTPaddr)
 	return http.ListenAndServe(smsc.HTTPaddr, nil)
 }
 
 func (smsc *SMSC) render(w http.ResponseWriter, code int, message string) {
-	smsc.log.Infof("[%d] %s", code, message)
+	smsc.lhttp.Infof("[%d] %s", code, message)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -102,6 +102,6 @@ func (smsc *SMSC) render(w http.ResponseWriter, code int, message string) {
 		Message: message,
 	})
 	if err != nil {
-		smsc.log.Error(errors.Wrap(err, "http: render"))
+		smsc.lhttp.Error(errors.Wrap(err, "http: render"))
 	}
 }

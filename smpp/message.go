@@ -10,8 +10,8 @@ import (
 
 // A Message configures a short message that can be submitted via the Session.
 type Message struct {
-	Size   int
-	Chunks int
+	Size     int
+	Segments int
 
 	Src      string
 	Dst      string
