@@ -1,11 +1,12 @@
 version: '3.7'
 
 x-service: &service
+  stop_signal: SIGINT
   build:
     dockerfile: $PWD/kannel-build/Dockerfile
     context: $PWD/kannel-build
   volumes:
-    - .//kannel.conf:/etc/kannel/kannel.conf:ro
+    - ./kannel.conf:/etc/kannel/kannel.conf:ro
   networks:
     - kannel
 
@@ -47,7 +48,7 @@ services:
     restart: always
     image: kannel
     container_name: fakesmsc-cm
-    command: ["dockerize", "-wait", "tcp://bearerbox:20000", "-timeout", "1m", "/usr/local/bin/fakesmsc", "-H", "bearerbox", "-r", "20000", "-m", "0", "foo"]
+    command: ["dockerize", "-wait", "tcp://bearerbox:20000", "-timeout", "1m", "/usr/local/sbin/fakesmsc", "-H", "bearerbox", "-r", "20000", "-m", "0", "foo"]
 
 networks:
   kannel:
