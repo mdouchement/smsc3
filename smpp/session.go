@@ -281,10 +281,7 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 	m.ESMClass |= UDHI // The short message begins with a user data header (UDH)
 
 	msg := m.Text.Encode()
-	limit := pdutext.SizeUCS2Multipart
-	if _, ok := m.Text.(pdutext.GSM7); ok {
-		limit = pdutext.SizeGSM7Multipart
-	}
+	const limit = 134 // 140 bytes (raw) length limit minus the UDH's size
 
 	for i := 0; i < m.Segments; i++ {
 		udh[len(udh)-1] = byte(i + 1) // Set part number
