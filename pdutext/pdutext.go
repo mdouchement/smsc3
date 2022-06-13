@@ -65,3 +65,29 @@ func Segments(message string) int {
 
 	return segments
 }
+
+// Split in valid UTF-8 sequences.
+func Split(message string, size int) []string {
+	var i, n, m int
+	segment := make([]rune, size)
+	var segments []string
+
+	for _, r := range message {
+		n = i % size
+		segment[n] = r
+
+		m = n + 1
+		if m == size {
+			segments = append(segments, string(segment[:m]))
+			m = 0
+		}
+
+		i++ // The index from range is the byte index and not the rune index.
+	}
+
+	if m > 0 {
+		segments = append(segments, string(segment[:m]))
+	}
+
+	return segments
+}

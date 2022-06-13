@@ -280,18 +280,34 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 	}
 	m.ESMClass |= UDHI // The short message begins with a user data header (UDH)
 
-	msg := m.Text.Encode()
-	const limit = 134 // 140 bytes (raw) length limit minus the UDH's size
+	//
 
-	for i := 0; i < m.Segments; i++ {
+	var segments []string
+	var codec func(s string) pdutext.Codec
+
+	// Content aware splitting
+	switch v := m.Text.(type) {
+	case pdutext.GSM7:
+		segments = pdutext.Split(string(v), pdutext.SizeGSM7Multipart)
+		codec = func(s string) pdutext.Codec {
+			return pdutext.GSM7(s)
+		}
+	case pdutext.UCS2:
+		segments = pdutext.Split(string(v), pdutext.SizeUCS2Multipart)
+		codec = func(s string) pdutext.Codec {
+			return pdutext.UCS2(s)
+		}
+	default:
+		return errors.Errorf("unsupported message codec: %T", v)
+	}
+
+	//
+
+	for i, segment := range segments {
 		udh[len(udh)-1] = byte(i + 1) // Set part number
 
 		f := p.Fields()
-		if i < m.Segments-1 {
-			f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, msg[i*limit:(i+1)*limit]...)))
-		} else {
-			f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, msg[i*limit:]...)))
-		}
+		f.Set(pdufield.ShortMessage, pdutext.Raw(append(udh, codec(segment).Encode()...)))
 		f.Set(pdufield.DataCoding, uint8(m.Text.Type()))
 		f.Set(pdufield.ESMClass, m.ESMClass) // UDH Indicator
 
