@@ -22,8 +22,10 @@ type (
 	Codec = pdutext.Codec
 	// Raw text codec, no encoding.
 	Raw = pdutext.Raw
-	// GSM7 is GSM 7-bit coding.
+	// GSM7 is GSM 7-bit coding (7-bit on 8-bit space).
 	GSM7 = pdutext.GSM7
+	// GSM7Packed is GSM 7-bit coding (packed).
+	GSM7Packed = pdutext.GSM7Packed
 	// UCS2 is UCS2 coding (UTF-16BE).
 	UCS2 = pdutext.UCS2
 )
