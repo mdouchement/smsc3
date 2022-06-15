@@ -33,7 +33,7 @@ type (
 // SelectCodec selects the right codec and computes details.
 func SelectCodec(message string) (c Codec, size int, segments int) {
 	if IsGSM7(message) {
-		return GSM7(message), Size(message), Segments(message)
+		return GSM7Packed(message), Size(message), Segments(message)
 	}
 	return UCS2(message), Size(message), Segments(message)
 }
