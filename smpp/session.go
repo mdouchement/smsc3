@@ -287,7 +287,7 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 
 	// Content aware splitting
 	switch v := m.Text.(type) {
-	case pdutext.GSM7:
+	case pdutext.GSM7Packed:
 		segments = pdutext.Split(string(v), pdutext.SizeGSM7Multipart)
 		codec = func(s string) pdutext.Codec {
 			return pdutext.GSM7Packed(s)
