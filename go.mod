@@ -1,9 +1,8 @@
 module github.com/mdouchement/smsc3
 
-go 1.18
+go 1.19
 
 require (
-	github.com/davecgh/go-spew v1.1.1
 	github.com/goburrow/cache v0.1.4
 	github.com/mdouchement/basex v0.0.0-20200802103314-a4f42a0e6590
 	github.com/mdouchement/logger v0.0.0-20200719134033-63d0eda5567d
@@ -15,6 +14,7 @@ require (
 )
 
 require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
