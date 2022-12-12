@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goburrow/cache"
@@ -32,6 +33,7 @@ type (
 		sequences cache.Cache
 		segments  cache.Cache
 		systemID  string
+		sequence  uint32
 	}
 
 	// A Segment holds multi-segments metadata.
@@ -265,6 +267,7 @@ func (s *Session) single(m *Message, p pdu.Body) error {
 	f := p.Fields()
 	f.Set(pdufield.ShortMessage, m.Text)
 
+	p.Header().Seq = atomic.AddUint32(&s.sequence, 1)
 	return s.c.Serialize(p)
 }
 
@@ -311,6 +314,7 @@ func (s *Session) multipart(m *Message, p pdu.Body) error {
 		f.Set(pdufield.DataCoding, uint8(m.Text.Type()))
 		f.Set(pdufield.ESMClass, m.ESMClass) // UDH Indicator
 
+		p.Header().Seq = atomic.AddUint32(&s.sequence, 1)
 		if err := s.c.Serialize(p); err != nil {
 			return err
 		}
