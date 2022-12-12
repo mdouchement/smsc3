@@ -39,8 +39,9 @@ func Parse(addr string) Address {
 	}
 
 	return &address{
-		raw:           addr,
-		number:        number,
+		raw:    addr,
+		number: number,
+		// TODO: use PhoneNumber methods helper.
 		international: regexp.MustCompile(`^(\+|00)[0-9]{11,}$`),
 		national:      regexp.MustCompile(`^[0-9]{9,}$`),
 		shortcode:     regexp.MustCompile(`^[0-9]{3,8}$`),

@@ -23,12 +23,18 @@ type (
 	// Raw text codec, no encoding.
 	Raw = pdutext.Raw
 	// GSM7 is GSM 7-bit coding (7-bit on 8-bit space).
+	// Not the official format but still used by several tools/SMSC.
 	GSM7 = pdutext.GSM7
 	// GSM7Packed is GSM 7-bit coding (packed).
-	GSM7Packed = pdutext.GSM7 // FIXME: should be pdutext.GSM7Packed but it is not supported by Kannel.
+	// This coding allows 160 characters coded over 140 bytes (160 * 7-bit / 8-bit = 140 bytes)
+	// which is the format described in GSM 03.38.
+	// FIXME: should be pdutext.GSM7Packed but it is not supported by Kannel.
+	GSM7Packed = pdutext.GSM7
 	// UCS2 is UCS2 coding (UTF-16BE).
 	UCS2 = pdutext.UCS2
 )
+
+// TODO: not optimized, refactor to avoid to use `IsGSM7' each time.
 
 // SelectCodec selects the right codec and computes details.
 func SelectCodec(message string) (c Codec, size int, segments int) {
@@ -48,20 +54,39 @@ func Size(message string) int {
 
 // Segments returns the number of segments used to send the given message.
 func Segments(message string) int {
-	size := Size(message)
-	single := SizeUCS2Single
-	multipart := SizeUCS2Multipart
 	if IsGSM7(message) {
-		single = SizeGSM7Single
-		multipart = SizeGSM7Multipart
+		var segments, s, n int
+		for _, r := range message {
+			n = GSM7size(string(r))
+			s += n
+			switch {
+			case s < SizeGSM7Multipart:
+				// Still have place in the current segment.
+			case s == SizeGSM7Multipart:
+				// Segment complete.
+				segments++
+				s = 0
+			default:
+				// Over segment size.
+				segments++
+				s = n
+			}
+		}
+
+		if s > 0 {
+			segments++
+		}
+
+		return segments
 	}
 
-	if size <= single {
+	size := Size(message)
+	if size <= SizeUCS2Single {
 		return 1
 	}
 
-	segments := size / multipart
-	if size%multipart != 0 {
+	segments := size / SizeUCS2Multipart
+	if size%SizeUCS2Multipart != 0 {
 		segments++
 	}
 
@@ -70,25 +95,34 @@ func Segments(message string) int {
 
 // Split in valid UTF-8 sequences.
 func Split(message string, size int) []string {
-	var i, n, m int
-	segment := make([]rune, size)
+	var s, n int
+	segment := make([]rune, 0, size+20)
 	var segments []string
 
 	for _, r := range message {
-		n = i % size
-		segment[n] = r
-
-		m = n + 1
-		if m == size {
-			segments = append(segments, string(segment[:m]))
-			m = 0
+		n = Size(string(r))
+		s += n
+		switch {
+		case s < size:
+			// Still have place in the current segment.
+			segment = append(segment, r)
+		case s == size:
+			// Segment complete.
+			segment = append(segment, r)
+			segments = append(segments, string(segment))
+			segment = segment[:0]
+			s = 0
+		default:
+			// Over segment size.
+			segments = append(segments, string(segment))
+			segment[0] = r
+			segment = segment[:1]
+			s = n
 		}
-
-		i++ // The index from range is the byte index and not the rune index.
 	}
 
-	if m > 0 {
-		segments = append(segments, string(segment[:m]))
+	if len(segment) > 0 {
+		segments = append(segments, string(segment))
 	}
 
 	return segments
